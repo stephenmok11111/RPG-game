@@ -748,7 +748,7 @@
     <div id="shopModeBar">
         <button class="dialog-btn dialog-btn-primary" id="shopBuyModeBtn">買入</button>
         <button class="dialog-btn dialog-btn-secondary" id="shopSellModeBtn">賣出</button>
-        <button class="dialog-btn dialog-btn-secondary" id="shopMultiSelectBtn" style="display:none;">☑ 多選賣出</button>
+ 
     </div>
     <div id="shopMultiSelectBar">
         <span class="total-price">已選 <span id="selectedCount">0</span> 件，🪙 <span id="selectedTotalPrice">0</span></span>
@@ -2356,16 +2356,17 @@ function applyReward(reward) {
     };
 
     let shopMode = 'buy';
-    let shopCategory = 'equipment';
-    let shopSelectedItem = null;
-    let shopQuantity = 1;
-    let confirmQuantity = 1;
-    let pendingConfirmAction = null;
-    let pendingUnequipData = null;
-    let pendingReplaceData = null;
+let shopCategory = 'equipment';
+let shopSelectedItem = null;
+let shopQuantity = 1;
+let confirmQuantity = 1;
+let pendingConfirmAction = null;
+let pendingUnequipData = null;
+let pendingReplaceData = null;
+let shopSellFilter = ' ';   // 'all', 'common', 'rare', 'epic', 'legendary'
+let shopRaritySelectedItems = [];  // ✅ 貼呢行
 
-    let multiSelectMode = false;
-    let selectedSellItems = [];
+    
 
     const workshopState = {
         currentView: 'main',
@@ -5970,221 +5971,267 @@ if (itemCount > 25) {
     // 商店系統（完整包含）
     // ============================================================
     const BUY_WHITELIST = ['potion', 'iron_sword', 'iron_helmet', 'leather_armor', 'wooden_shield', 'leather_shoes', 'copper_ring', 'enhance_stone', 'gold_key', 'silver_key', 'copper_key'];
+// 重置商店稀有度過濾器（每次打開商店時呼叫）
+function resetShopRarityFilter() {
+    shopSellFilter = '';
+    shopRaritySelectedItems = [];
+    const filterSelect = document.getElementById('shopRarityFilter');
+    if (filterSelect) {
+        filterSelect.value = '';
+    }
+}
 
     function openShopWindow() {
-        if (gameState.isFighting || gameState.gameOver || gameState.enemies.length > 0) { addLog('現在無法打開商店'); return; }
-        shopMode = 'buy';
-        shopCategory = 'equipment';
-        shopSelectedItem = null;
-        shopQuantity = 1;
-        multiSelectMode = false;
-        selectedSellItems = [];
-        document.getElementById('shopOverlay').classList.add('show');
-        document.getElementById('shopGoldDisplay').textContent = formatNum(gameState.player.gold);
-        renderShop();
-    }
+    if (gameState.isFighting || gameState.gameOver || gameState.enemies.length > 0) { addLog('現在無法打開商店'); return; }
+    shopMode = 'buy';
+    shopCategory = 'equipment';
+    shopSelectedItem = null;
+    shopQuantity = 1;
+    
+    // ✅ 重置稀有度過濾器
+    resetShopRarityFilter();
+    
+    document.getElementById('shopOverlay').classList.add('show');
+    document.getElementById('shopGoldDisplay').textContent = formatNum(gameState.player.gold);
+    renderShop();
+}
     function closeShopWindow() { 
-        document.getElementById('shopOverlay').classList.remove('show'); 
-        document.getElementById('shopConfirmOverlay').classList.remove('show');
-        multiSelectMode = false;
-        selectedSellItems = [];
-    }
-
-    function renderShop() {
-        const buyBtn = document.getElementById('shopBuyModeBtn');
-        const sellBtn = document.getElementById('shopSellModeBtn');
-        const multiSelectBtn = document.getElementById('shopMultiSelectBtn');
-        const multiSelectBar = document.getElementById('shopMultiSelectBar');
-        const categoriesDiv = document.getElementById('shopCategories');
-        const descBox = document.getElementById('shopDescBox');
-        const grid = document.getElementById('shopGrid');
-        const qtyInput = document.getElementById('shopQtyInput');
-        const qtyTotal = document.getElementById('shopQtyTotal');
-        const actionBtn = document.getElementById('shopActionBtn');
-
-        buyBtn.className = 'dialog-btn ' + (shopMode === 'buy' ? 'dialog-btn-primary' : 'dialog-btn-secondary');
-        sellBtn.className = 'dialog-btn ' + (shopMode === 'sell' ? 'dialog-btn-primary' : 'dialog-btn-secondary');
-
-        if (shopMode === 'sell') {
-            categoriesDiv.style.display = 'grid';
-            multiSelectBtn.style.display = 'inline-block';
-            if (multiSelectMode) {
-                multiSelectBar.classList.add('show');
-                multiSelectBtn.textContent = '☑ 取消多選';
-                multiSelectBtn.className = 'dialog-btn dialog-btn-primary';
-            } else {
-                multiSelectBar.classList.remove('show');
-                multiSelectBtn.textContent = '☑ 多選賣出';
-                multiSelectBtn.className = 'dialog-btn dialog-btn-secondary';
-            }
+    document.getElementById('shopOverlay').classList.remove('show'); 
+    document.getElementById('shopConfirmOverlay').classList.remove('show');
+    
+    // ✅ 步驟 6：重置商店狀態
+    shopSelectedItem = null;
+    shopQuantity = 1;
+    shopSellFilter = 'all';
+    shopCategory = 'equipment';
+    
+    // 重置確認對話框狀態
+    pendingConfirmAction = null;
+    confirmQuantity = 1;
+}
+// 获取当前商店物品列表（用于多选状态管理）
+function getShopItems() {
+    const category = shopCategory;
+    const filter = shopSellFilter || 'all';
+    const items = [];
+    
+    if (shopMode === 'sell') {
+        if (category === 'equipment') {
+            const instances = getBackpackEquipInstances();
+            instances.forEach(inst => {
+                const template = ITEM_TEMPLATES[inst.itemId];
+                if (!template) return;
+                if (!template.sellPrice || template.sellPrice <= 0) return;
+                if (filter !== 'all' && inst.rarity !== filter) return;
+                items.push({ 
+                    id: inst.itemId, 
+                    rarity: inst.rarity, 
+                    count: 1, 
+                    def: template, 
+                    type: 'instance', 
+                    uid: inst.uid,
+                    selected: false
+                });
+            });
         } else {
-            categoriesDiv.style.display = 'none';
-            multiSelectBtn.style.display = 'none';
-            multiSelectBar.classList.remove('show');
-            multiSelectMode = false;
-            selectedSellItems = [];
-        }
-
-        document.getElementById('shopGoldDisplay').textContent = formatNum(gameState.player.gold);
-
-        let items = [];
-        if (shopMode === 'buy') {
             Object.keys(ITEM_TEMPLATES).forEach(itemId => {
-                if (!BUY_WHITELIST.includes(itemId)) return;
                 const template = ITEM_TEMPLATES[itemId];
-                if (template.buyPrice && template.buyPrice > 0) {
-                    items.push({ id: itemId, rarity: 'common', def: template });
-                }
-            });
-        } else {
-            const category = shopCategory;
-            if (category === 'equipment') {
-                const instances = getBackpackEquipInstances();
-                instances.forEach(inst => {
-                    const template = ITEM_TEMPLATES[inst.itemId];
-                    if (!template) return;
-                    if (!template.sellPrice || template.sellPrice <= 0) return;
-                    const isSelected = multiSelectMode && selectedSellItems.some(s => s.type === 'instance' && s.uid === inst.uid);
-                    items.push({ 
-                        id: inst.itemId, 
-                        rarity: inst.rarity, 
-                        count: 1, 
-                        def: template, 
-                        type: 'instance', 
-                        uid: inst.uid,
-                        selected: isSelected
-                    });
-                });
-            } else {
-                Object.keys(ITEM_TEMPLATES).forEach(itemId => {
-                    const template = ITEM_TEMPLATES[itemId];
-                    if (!template) return;
-                    if (template.category !== category) return;
-                    if (!template.sellPrice || template.sellPrice <= 0) return;
-                    const counts = gameState.player.items[itemId] || { common:0, rare:0, epic:0, legendary:0 };
-                    const rarityOrder = ['common','rare','epic','legendary'];
-                    rarityOrder.forEach(rarity => {
-                        const count = counts[rarity] || 0;
-                        if (count > 0) {
-                            const isSelected = multiSelectMode && selectedSellItems.some(s => s.type === 'stack' && s.itemId === itemId && s.rarity === rarity);
-                            items.push({
-                                id: itemId,
-                                rarity: rarity,
-                                count: count,
-                                def: template,
-                                type: 'stack',
-                                uid: null,
-                                selected: isSelected
-                            });
-                        }
-                    });
-                });
-            }
-        }
-
-        if (multiSelectMode) {
-            let totalPrice = 0;
-            let count = 0;
-            selectedSellItems.forEach(sel => {
-                if (sel.type === 'instance') {
-                    const inst = findEquipInstance(sel.uid);
-                    if (inst && !inst.equipped) {
-                        const template = ITEM_TEMPLATES[inst.itemId];
-                        if (template && template.sellPrice) {
-                            totalPrice += template.sellPrice;
-                            count++;
-                        }
+                if (!template) return;
+                if (template.category !== category) return;
+                if (!template.sellPrice || template.sellPrice <= 0) return;
+                const counts = gameState.player.items[itemId] || { common:0, rare:0, epic:0, legendary:0 };
+                const rarityOrder = ['common','rare','epic','legendary'];
+                rarityOrder.forEach(rarity => {
+                    const count = counts[rarity] || 0;
+                    if (count > 0) {
+                        if (filter !== 'all' && rarity !== filter) return;
+                        items.push({
+                            id: itemId,
+                            rarity: rarity,
+                            count: count,
+                            def: template,
+                            type: 'stack',
+                            uid: null,
+                            selected: false
+                        });
                     }
-                } else if (sel.type === 'stack') {
-                    const cnt = getItemCount(sel.itemId, sel.rarity);
-                    if (cnt > 0) {
-                        const template = ITEM_TEMPLATES[sel.itemId];
-                        if (template && template.sellPrice) {
-                            totalPrice += template.sellPrice * cnt;
-                            count++;
-                        }
-                    }
-                }
+                });
             });
-            document.getElementById('selectedCount').textContent = count;
-            document.getElementById('selectedTotalPrice').textContent = formatNum(totalPrice);
-            document.getElementById('shopMultiConfirmBtn').disabled = (count === 0);
         }
+    }
+    return items;
+}
 
-     if (shopSelectedItem && !multiSelectMode) {
-    const template = ITEM_TEMPLATES[shopSelectedItem.id];
-    if (template) {
-        let count = 0;
-        if (shopMode === 'sell') {
-            if (shopSelectedItem.type === 'instance') {
-                const inst = findEquipInstance(shopSelectedItem.uid);
-                if (inst && !inst.equipped) count = 1;
-            } else if (shopSelectedItem.type === 'stack') {
-                count = getItemCount(shopSelectedItem.id, shopSelectedItem.rarity);
+// 更新多选状态栏
+function updateMultiSelectBar(items) {
+    const selectedItems = items.filter(it => it.selected);
+    const bar = document.getElementById('shopMultiSelectBar');
+    const countSpan = document.getElementById('selectedCount');
+    const priceSpan = document.getElementById('selectedTotalPrice');
+    const confirmBtn = document.getElementById('shopMultiConfirmBtn');
+    
+    if (selectedItems.length > 0) {
+        bar.classList.add('show');
+        let totalPrice = 0;
+        selectedItems.forEach(item => {
+            const template = ITEM_TEMPLATES[item.id];
+            if (template && template.sellPrice) {
+                totalPrice += template.sellPrice * (item.count || 1);
             }
-        }
-        const price = shopMode === 'buy' ? template.buyPrice : template.sellPrice;
-        const total = shopQuantity * price;
-        const canAct = shopMode === 'buy' ? (gameState.player.gold >= total) : (count >= shopQuantity);
+        });
+        countSpan.textContent = selectedItems.length;
+        priceSpan.textContent = formatNum(totalPrice);
+        confirmBtn.disabled = false;
+    } else {
+        bar.classList.remove('show');
+        countSpan.textContent = '0';
+        priceSpan.textContent = '0';
+        confirmBtn.disabled = true;
+    }
+}
+function renderShop() {
+    // ✅ 步驟 1：確保過濾器有預設值
+    if (typeof shopSellFilter === 'undefined' || shopSellFilter === null) {
+        shopSellFilter = 'all';
+    }
+    
+    const buyBtn = document.getElementById('shopBuyModeBtn');
+    const sellBtn = document.getElementById('shopSellModeBtn');
+    const multiSelectBar = document.getElementById('shopMultiSelectBar');
+    const categoriesDiv = document.getElementById('shopCategories');
+    const descBox = document.getElementById('shopDescBox');
+    const grid = document.getElementById('shopGrid');
+    const qtyInput = document.getElementById('shopQtyInput');
+    const qtyTotal = document.getElementById('shopQtyTotal');
+    const actionBtn = document.getElementById('shopActionBtn');
+
+    buyBtn.className = 'dialog-btn ' + (shopMode === 'buy' ? 'dialog-btn-primary' : 'dialog-btn-secondary');
+    sellBtn.className = 'dialog-btn ' + (shopMode === 'sell' ? 'dialog-btn-primary' : 'dialog-btn-secondary');
+
+    // 移除舊過濾器
+    const oldFilter = document.getElementById('shopRarityFilterContainer');
+    if (oldFilter) oldFilter.remove();
+
+    // ✅ 步驟 2：統一控制分類按鈕顯示
+    if (shopMode === 'sell') {
+        categoriesDiv.style.display = 'grid';
         
-        // ✅ 判斷鎖匙稀有度（用正確顏色）
-        let rarityName = RARITY_NAMES[shopSelectedItem.rarity] || shopSelectedItem.rarity;
-        let rarityColor = '#888';
-        if (template.id === 'gold_key') {
-            rarityName = '罕見';
-            rarityColor = '#9b59b6';
-        } else if (template.id === 'silver_key') {
-            rarityName = '稀有';
-            rarityColor = '#4a8aba';
-        } else if (template.id === 'copper_key') {
-            rarityName = '普通';
-            rarityColor = '#4a9a4a';
-        }
+        // 多选栏由 updateMultiSelectBar 控制显示
 
-        let descHtml = `<div class="desc-name">${template.icon} ${template.name} <span style="color:${rarityColor};">（${rarityName}）</span>${shopMode === 'sell' ? `（持有 ${count} 個）` : ''}</div>`;
-        if (template.category === 'equipment') {
-            const mult = RARITY_MULTIPLIER[shopSelectedItem.rarity] || 1.0;
-            const stats = template.baseStats || {};
-            const statParts = Object.keys(stats).map(key => {
-                const val = Math.floor(stats[key] * mult);
-                const labels = { atk:'物攻', def:'物防', matk:'魔攻', mdef:'魔防', maxHp:'HP', maxMp:'MP', agi:'敏捷', luk:'幸運' };
-                return `${labels[key] || key} +${val}`;
-            });
-            descHtml += `<div class="desc-text">${statParts.join('、') || '無屬性'}</div>`;
-        } else {
-            descHtml += `<div class="desc-text">${template.description}</div>`;
-            if (template.id === 'potion') {
-                const effect = template.getEffect(shopSelectedItem.rarity);
-                const effectDesc = `回復 ${effect.healBase} + ${Math.round(effect.healPercent * 100)}% HP` + (effect.mpRestore > 0 ? `，額外回復 ${Math.round(effect.mpRestore * 100)}% MP` : '');
-                descHtml += `<div style="color: #aaa; font-size: 13px;">${effectDesc}</div>`;
-            }
-            
-        }
-        descHtml += `<div style="color: ${rarityColor}; font-size: 12px; margin-top: 2px;">💎 ${rarityName}</div>`;
-        descBox.innerHTML = descHtml;
+        // 插入新過濾器
+        const filterContainer = document.createElement('div');
+        filterContainer.id = 'shopRarityFilterContainer';
+        filterContainer.style.cssText = 'display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap;';
+        filterContainer.innerHTML = `
+    <span style="color:#888; font-size:13px;">稀有度</span>
+    <select id="shopRarityFilter" style="background:#0f0f23; color:#eee; border:1px solid #333366; border-radius:8px; padding:4px 12px; font-size:13px; cursor:pointer;">
+        <option value="" ${shopSellFilter === '' ? 'selected' : ''}>請選擇</option>
+        <option value="common" ${shopSellFilter === 'common' ? 'selected' : ''}>普通</option>
+        <option value="rare" ${shopSellFilter === 'rare' ? 'selected' : ''}>稀有</option>
+        <option value="epic" ${shopSellFilter === 'epic' ? 'selected' : ''}>罕見</option>
+        <option value="legendary" ${shopSellFilter === 'legendary' ? 'selected' : ''}>獨特</option>
+    </select>
+    <button class="dialog-btn dialog-btn-primary" id="shopSellByRarityBtn" style="padding:4px 16px; font-size:13px;">💰 賣出</button>
+`;
+        categoriesDiv.parentNode.insertBefore(filterContainer, categoriesDiv);
 
-        qtyInput.value = shopQuantity;
-        qtyTotal.textContent = `🪙 ${formatNum(total)}`;
-        actionBtn.textContent = shopMode === 'buy' ? '購買' : '賣出';
-        actionBtn.disabled = !canAct || multiSelectMode;
-        actionBtn.className = 'qty-action-btn' + (shopMode === 'sell' ? ' sell-btn' : '');
-        actionBtn.onclick = function() {
-            if (this.disabled) return;
-            if (shopSelectedItem) showConfirmDialog(shopMode, shopSelectedItem.id, shopSelectedItem.rarity, shopSelectedItem.type, shopSelectedItem.uid);
-        };
-
-        const maxQty = shopMode === 'buy' ? Math.floor(gameState.player.gold / price) : (count || 0);
-        document.getElementById('shopQtyMinus').disabled = shopQuantity <= 1 || multiSelectMode;
-        document.getElementById('shopQtyPlus').disabled = shopQuantity >= maxQty || maxQty === 0 || multiSelectMode;
+        document.getElementById('shopRarityFilter').addEventListener('change', function() {
+    shopSellFilter = this.value;
+    // ✅ 選擇稀有度後，自動更新剔號顯示
+    updateRaritySelectedItems();
+    renderShop();
+});
+        document.getElementById('shopSellByRarityBtn').addEventListener('click', function() {
+            confirmSellByRarity();
+        });
 
     } else {
-        descBox.innerHTML = `<span class="empty-desc">點擊物品查看詳細說明</span>`;
-        qtyInput.value = 1;
-        qtyTotal.textContent = '🪙 0';
-        actionBtn.disabled = true;
-        document.getElementById('shopQtyMinus').disabled = true;
-        document.getElementById('shopQtyPlus').disabled = true;
+        // 買入模式
+        categoriesDiv.style.display = 'none';
+        
+        multiSelectBar.classList.remove('show');
     }
+
+    document.getElementById('shopGoldDisplay').textContent = formatNum(gameState.player.gold);
+
+    let items = [];
+    if (shopMode === 'buy') {
+        // ✅ 買入模式：從 BUY_WHITELIST 讀取
+        Object.keys(ITEM_TEMPLATES).forEach(itemId => {
+            if (!BUY_WHITELIST.includes(itemId)) return;
+            const template = ITEM_TEMPLATES[itemId];
+            if (template.buyPrice && template.buyPrice > 0) {
+                items.push({ id: itemId, rarity: 'common', def: template });
+            }
+        });
+    } else {
+        // 賣出模式：使用 getShopItems()
+        items = getShopItems();
+    }
+    // --- 顯示選中物品描述 ---
+    if (shopSelectedItem) {
+        const template = ITEM_TEMPLATES[shopSelectedItem.id];
+        if (template) {
+            let count = 0;
+            if (shopMode === 'sell') {
+                if (shopSelectedItem.type === 'instance') {
+                    const inst = findEquipInstance(shopSelectedItem.uid);
+                    if (inst && !inst.equipped) count = 1;
+                } else if (shopSelectedItem.type === 'stack') {
+                    count = getItemCount(shopSelectedItem.id, shopSelectedItem.rarity);
+                }
+            }
+            const price = shopMode === 'buy' ? template.buyPrice : template.sellPrice;
+            const total = shopQuantity * price;
+            const canAct = shopMode === 'buy' ? (gameState.player.gold >= total) : (count >= shopQuantity);
+            
+            let rarityName = RARITY_NAMES[shopSelectedItem.rarity] || shopSelectedItem.rarity;
+            let rarityColor = '#888';
+            if (template.id === 'gold_key') {
+                rarityName = '罕見';
+                rarityColor = '#9b59b6';
+            } else if (template.id === 'silver_key') {
+                rarityName = '稀有';
+                rarityColor = '#4a8aba';
+            } else if (template.id === 'copper_key') {
+                rarityName = '普通';
+                rarityColor = '#4a9a4a';
+            }
+
+            let descHtml = `<div class="desc-name">${template.icon} ${template.name} <span style="color:${rarityColor};">（${rarityName}）</span>${shopMode === 'sell' ? `（持有 ${count} 個）` : ''}</div>`;
+            if (template.category === 'equipment') {
+                const mult = RARITY_MULTIPLIER[shopSelectedItem.rarity] || 1.0;
+                const stats = template.baseStats || {};
+                const statParts = Object.keys(stats).map(key => {
+                    const val = Math.floor(stats[key] * mult);
+                    const labels = { atk:'物攻', def:'物防', matk:'魔攻', mdef:'魔防', maxHp:'HP', maxMp:'MP', agi:'敏捷', luk:'幸運' };
+                    return `${labels[key] || key} +${val}`;
+                });
+                descHtml += `<div class="desc-text">${statParts.join('、') || '無屬性'}</div>`;
+            } else {
+                descHtml += `<div class="desc-text">${template.description}</div>`;
+                if (template.id === 'potion') {
+                    const effect = template.getEffect(shopSelectedItem.rarity);
+                    const effectDesc = `回復 ${effect.healBase} + ${Math.round(effect.healPercent * 100)}% HP` + (effect.mpRestore > 0 ? `，額外回復 ${Math.round(effect.mpRestore * 100)}% MP` : '');
+                    descHtml += `<div style="color: #aaa; font-size: 13px;">${effectDesc}</div>`;
+                }
+            }
+            descHtml += `<div style="color: ${rarityColor}; font-size: 12px; margin-top: 2px;">💎 ${rarityName}</div>`;
+            descBox.innerHTML = descHtml;
+
+            qtyInput.value = shopQuantity;
+            qtyTotal.textContent = `🪙 ${formatNum(total)}`;
+            actionBtn.textContent = shopMode === 'buy' ? '購買' : '賣出';
+            actionBtn.disabled = !canAct;
+            actionBtn.className = 'qty-action-btn' + (shopMode === 'sell' ? ' sell-btn' : '');
+            actionBtn.onclick = function() {
+                if (this.disabled) return;
+                if (shopSelectedItem) showConfirmDialog(shopMode, shopSelectedItem.id, shopSelectedItem.rarity, shopSelectedItem.type, shopSelectedItem.uid);
+            };
+
+            const maxQty = shopMode === 'buy' ? Math.floor(gameState.player.gold / price) : (count || 0);
+            document.getElementById('shopQtyMinus').disabled = shopQuantity <= 1;
+            document.getElementById('shopQtyPlus').disabled = shopQuantity >= maxQty || maxQty === 0;
 
         } else {
             descBox.innerHTML = `<span class="empty-desc">點擊物品查看詳細說明</span>`;
@@ -6194,162 +6241,190 @@ if (itemCount > 25) {
             document.getElementById('shopQtyMinus').disabled = true;
             document.getElementById('shopQtyPlus').disabled = true;
         }
-
-const totalSlots = 50;
-let html = '';
-for (let i=0; i<totalSlots; i++) {
-    if (i < items.length) {
-        const item = items[i];
-        const isSelected = shopSelectedItem && shopSelectedItem.id === item.id && shopSelectedItem.rarity === item.rarity && !multiSelectMode;
-        let rarityClass = getRarityClass(item.rarity);
-        const isMultiSelected = item.selected || false;
-        const selectedClass = isMultiSelected ? 'selected-for-sell' : '';
-        let checkMarkHtml = '';
-        if (multiSelectMode && isMultiSelected) {
-            checkMarkHtml = `<span class="check-mark">✔</span>`;
-        }
-        
-        // ✅ 鎖匙強制顯示稀有度外框（唔加標籤）
-        if (item.id === 'gold_key') {
-            rarityClass = 'rarity-epic';    // 紫色外框
-        } else if (item.id === 'silver_key') {
-            rarityClass = 'rarity-rare';     // 藍色外框
-        } else if (item.id === 'copper_key') {
-            rarityClass = 'rarity-common';   // 綠色外框
-        }
-        
-        html += `<div class="shop-grid-slot ${isSelected ? 'selected' : ''} ${rarityClass} ${selectedClass}" 
-    data-item="${item.id}" data-rarity="${item.rarity}" data-type="${item.type}" data-uid="${item.uid || ''}" data-index="${i}">
-    <span class="slot-icon">${item.def.icon}</span>
-    <span style="font-size:8px; color:#aaa; text-align:center; line-height:1.1; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; margin-top:2px;">${item.def.name}</span>
-    ${shopMode === 'sell' ? `<span class="slot-count">${item.count}</span>` : ''}
-    ${checkMarkHtml}
-</div>`;
     } else {
-        html += `<div class="shop-grid-slot empty-slot"></div>`;
+        descBox.innerHTML = `<span class="empty-desc">點擊物品查看詳細說明</span>`;
+        qtyInput.value = 1;
+        qtyTotal.textContent = '🪙 0';
+        actionBtn.disabled = true;
+        document.getElementById('shopQtyMinus').disabled = true;
+        document.getElementById('shopQtyPlus').disabled = true;
+    }
+
+    const totalSlots = 50;
+    let html = '';
+    for (let i=0; i<totalSlots; i++) {
+        if (i < items.length) {
+            const item = items[i];
+            const isSelected = shopSelectedItem && shopSelectedItem.id === item.id && shopSelectedItem.rarity === item.rarity;
+            let rarityClass = getRarityClass(item.rarity);
+            if (item.id === 'gold_key') {
+                rarityClass = 'rarity-epic';
+            } else if (item.id === 'silver_key') {
+                rarityClass = 'rarity-rare';
+            } else if (item.id === 'copper_key') {
+                rarityClass = 'rarity-common';
+            }
+            // ✅ 修正：加返 selected 狀態（包括選中剔號）
+            // ✅ 檢查是否喺「按稀有度批量賣出」嘅選中列表中
+// ✅ 檢查是否喺「按稀有度批量賣出」嘅選中列表中
+const isSelected2 = item.selected || 
+    (shopRaritySelectedItems && shopRaritySelectedItems.length > 0 && (
+        (item.type === 'instance' && shopRaritySelectedItems.includes(item.uid)) ||
+        (item.type === 'stack' && shopRaritySelectedItems.includes(item.itemId + '|' + item.rarity))
+    ));
+            html += `<div class="shop-grid-slot ${isSelected2 ? 'selected selected-for-sell' : ''} ${rarityClass}" 
+                data-item="${item.id}" data-rarity="${item.rarity}" data-type="${item.type}" data-uid="${item.uid || ''}" data-index="${i}">
+                <span class="slot-icon">${item.def.icon}</span>
+                <span style="font-size:8px; color:#aaa; text-align:center; line-height:1.1; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; margin-top:2px;">${item.def.name}</span>
+                ${shopMode === 'sell' ? `<span class="slot-count">${item.count}</span>` : ''}
+       ${isSelected2 ? `<span class="check-mark">✔</span>` : ''}
+            </div>`;
+        } else {
+            html += `<div class="shop-grid-slot empty-slot"></div>`;
+        }
+    }
+    grid.innerHTML = html;
+
+    grid.querySelectorAll('.shop-grid-slot[data-item]').forEach(slot => {
+        slot.addEventListener('click', function() {
+            const itemId = this.dataset.item;
+            const rarity = this.dataset.rarity;
+            const type = this.dataset.type;
+            const uid = this.dataset.uid || null;
+            const index = parseInt(this.dataset.index);
+            
+            if (!itemId || !rarity) return;
+            
+            // ✅ 卖模式：切换选中状态（多选）
+            if (shopMode === 'sell') {
+                const items2 = getShopItems();
+                if (index >= 0 && index < items2.length) {
+                    items2[index].selected = !items2[index].selected;
+                    // 更新 shopSelectedItem（用于描述显示）
+                    const selectedItems = items2.filter(it => it.selected);
+                    if (selectedItems.length > 0) {
+                        shopSelectedItem = { 
+                            id: selectedItems[0].id, 
+                            rarity: selectedItems[0].rarity,
+                            type: selectedItems[0].type,
+                            uid: selectedItems[0].uid
+                        };
+                    } else {
+                        shopSelectedItem = null;
+                    }
+                    renderShop();
+                    updateMultiSelectBar(items2);
+                }
+            } else {
+                // ✅ 买模式：单选
+                shopSelectedItem = { id: itemId, rarity: rarity, type: type, uid: uid };
+                shopQuantity = 1;
+                renderShop();
+            }
+        });
+    });
+
+    if (shopSelectedItem) {
+        const template = ITEM_TEMPLATES[shopSelectedItem.id];
+        if (!template) { shopSelectedItem = null; renderShop(); return; }
+        if (shopMode === 'sell') {
+            if (shopSelectedItem.type === 'instance') {
+                const inst = findEquipInstance(shopSelectedItem.uid);
+                if (!inst || inst.equipped) { shopSelectedItem = null; renderShop(); return; }
+            } else if (shopSelectedItem.type === 'stack') {
+                if (getItemCount(shopSelectedItem.id, shopSelectedItem.rarity) <= 0) { shopSelectedItem = null; renderShop(); return; }
+            }
+        }
     }
 }
-        grid.innerHTML = html;
 
-        grid.querySelectorAll('.shop-grid-slot[data-item]').forEach(slot => {
-            slot.addEventListener('click', function() {
-                const itemId = this.dataset.item;
-                const rarity = this.dataset.rarity;
-                const type = this.dataset.type;
-                const uid = this.dataset.uid || null;
-                
-                if (multiSelectMode && shopMode === 'sell') {
-                    if (type === 'instance') {
-                        const idx = selectedSellItems.findIndex(s => s.type === 'instance' && s.uid === uid);
-                        if (idx === -1) {
-                            selectedSellItems.push({ type: 'instance', uid: uid });
-                        } else {
-                            selectedSellItems.splice(idx, 1);
-                        }
-                    } else if (type === 'stack') {
-                        const idx = selectedSellItems.findIndex(s => s.type === 'stack' && s.itemId === itemId && s.rarity === rarity);
-                        if (idx === -1) {
-                            selectedSellItems.push({ type: 'stack', itemId: itemId, rarity: rarity });
-                        } else {
-                            selectedSellItems.splice(idx, 1);
-                        }
-                    }
-                    renderShop();
-                    return;
-                }
-                
-                if (itemId && rarity) {
-                    shopSelectedItem = { id: itemId, rarity: rarity, type: type, uid: uid };
-                    shopQuantity = 1;
-                    renderShop();
-                }
-            });
-        });
-
-        if (shopSelectedItem && !multiSelectMode) {
-            const template = ITEM_TEMPLATES[shopSelectedItem.id];
-            if (!template) { shopSelectedItem = null; renderShop(); return; }
-            if (shopMode === 'sell') {
-                if (shopSelectedItem.type === 'instance') {
-                    const inst = findEquipInstance(shopSelectedItem.uid);
-                    if (!inst || inst.equipped) { shopSelectedItem = null; renderShop(); return; }
-                } else if (shopSelectedItem.type === 'stack') {
-                    if (getItemCount(shopSelectedItem.id, shopSelectedItem.rarity) <= 0) { shopSelectedItem = null; renderShop(); return; }
-                }
-            }
-        }
-    }
-
-    function confirmMultiSell() {
-        if (selectedSellItems.length === 0) return;
-        let totalPrice = 0;
-        let validItems = [];
-        selectedSellItems.forEach(sel => {
-            if (sel.type === 'instance') {
-                const inst = findEquipInstance(sel.uid);
-                if (inst && !inst.equipped) {
-                    const template = ITEM_TEMPLATES[inst.itemId];
-                    if (template && template.sellPrice) {
-                        totalPrice += template.sellPrice;
-                        validItems.push(sel);
-                    }
-                }
-            } else if (sel.type === 'stack') {
-                const cnt = getItemCount(sel.itemId, sel.rarity);
-                if (cnt > 0) {
-                    const template = ITEM_TEMPLATES[sel.itemId];
-                    if (template && template.sellPrice) {
-                        totalPrice += template.sellPrice * cnt;
-                        validItems.push(sel);
-                    }
-                }
-            }
-        });
-        if (validItems.length === 0) {
-            addLog('沒有可賣出的物品');
-            return;
-        }
-        document.getElementById('shopConfirmTitle').textContent = '⚠️ 確認批量賣出';
-        document.getElementById('shopConfirmMsg').textContent = `確定要賣出 ${validItems.length} 件物品嗎？`;
-        document.getElementById('shopConfirmDetail').textContent = `總收入：🪙 ${formatNum(totalPrice)}`;
-        document.getElementById('shopConfirmQuantityRow').style.display = 'none';
-        document.getElementById('shopConfirmTotal').textContent = '';
-        pendingConfirmAction = { type: 'multi_sell', items: validItems, totalPrice: totalPrice };
-        document.getElementById('shopConfirmOverlay').classList.add('show');
-    }
-
-    function executeMultiSell() {
-        if (!pendingConfirmAction || pendingConfirmAction.type !== 'multi_sell') return;
-        const { items, totalPrice } = pendingConfirmAction;
-        let soldCount = 0;
-        items.forEach(sel => {
-            if (sel.type === 'instance') {
-                const inst = findEquipInstance(sel.uid);
-                if (inst && !inst.equipped) {
-                    if (removeEquipmentInstance(sel.uid)) {
-                        soldCount++;
-                    }
-                }
-            } else if (sel.type === 'stack') {
-                const cnt = getItemCount(sel.itemId, sel.rarity);
-                if (cnt > 0) {
-                    if (removeItem(sel.itemId, sel.rarity, cnt)) {
-                        soldCount++;
-                    }
-                }
-            }
-        });
-        if (soldCount > 0) {
-            gameState.player.gold += totalPrice;
-            addLog(`💰 批量賣出 ${soldCount} 件物品，獲得 ${formatNum(totalPrice)} 金幣`);
-        }
-        pendingConfirmAction = null;
-        document.getElementById('shopConfirmOverlay').classList.remove('show');
-        selectedSellItems = [];
-        multiSelectMode = false;
-        render();
+    function bindShopEvents() {
+    // 买入 / 卖出 模式切换
+    document.getElementById('shopBuyModeBtn').addEventListener('click', function() {
+        shopMode = 'buy';
+        shopSelectedItem = null;
+        shopQuantity = 1;
         renderShop();
-    }
+    });
+    document.getElementById('shopSellModeBtn').addEventListener('click', function() {
+        shopMode = 'sell';
+        shopSelectedItem = null;
+        shopQuantity = 1;
+        renderShop();
+    });
+
+    // ---------- 商店主界面数量控制 ----------
+    document.getElementById('shopQtyMinus').addEventListener('click', function() {
+        let val = parseInt(document.getElementById('shopQtyInput').value) || 1;
+        if (val > 1) {
+            document.getElementById('shopQtyInput').value = val - 1;
+            updateShopQty();
+        }
+    });
+    document.getElementById('shopQtyPlus').addEventListener('click', function() {
+        let val = parseInt(document.getElementById('shopQtyInput').value) || 1;
+        document.getElementById('shopQtyInput').value = val + 1;
+        updateShopQty();
+    });
+    document.getElementById('shopQtyInput').addEventListener('change', function() {
+        updateShopQty();
+    });
+
+    // ---------- 确认对话框数量控制 ----------
+    document.getElementById('confirmQtyMinus').addEventListener('click', function() {
+        let val = parseInt(document.getElementById('confirmQtyInput').value) || 1;
+        if (val > 1) {
+            document.getElementById('confirmQtyInput').value = val - 1;
+            updateConfirmQuantityDisplay();
+        }
+    });
+    document.getElementById('confirmQtyPlus').addEventListener('click', function() {
+        let val = parseInt(document.getElementById('confirmQtyInput').value) || 1;
+        document.getElementById('confirmQtyInput').value = val + 1;
+        updateConfirmQuantityDisplay();
+    });
+    document.getElementById('confirmQtyInput').addEventListener('change', function() {
+        updateConfirmQuantityDisplay();
+    });
+
+    // ---------- 确认对话框 确定 / 取消 ----------
+    document.getElementById('shopConfirmOk').addEventListener('click', function() {
+        executeConfirmAction();
+    });
+    document.getElementById('shopConfirmCancel').addEventListener('click', function() {
+        document.getElementById('shopConfirmOverlay').classList.remove('show');
+        pendingConfirmAction = null;
+    });
+
+    // ---------- 商店分类切换（装备 / 素材 / 其他） ----------
+document.querySelectorAll('.shop-category-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        shopCategory = this.dataset.category;
+        document.querySelectorAll('.shop-category-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        shopSelectedItem = null;
+        
+        // ✅ 切換分類時重置稀有度過濾器
+        shopSellFilter = '';
+        shopRaritySelectedItems = [];
+        // 如果有下拉選單，重置佢嘅值
+        const filterSelect = document.getElementById('shopRarityFilter');
+        if (filterSelect) {
+            filterSelect.value = '';
+        }
+        
+        renderShop();
+    });
+});
+
+    // ---------- 点击确认框背景关闭 ----------
+    document.getElementById('shopConfirmOverlay').addEventListener('click', function(e) {
+        if (e.target === this) {
+            this.classList.remove('show');
+            pendingConfirmAction = null;
+        }
+    });
+}
 
     function showConfirmDialog(type, itemId, rarity, itemType, uid) {
         const template = ITEM_TEMPLATES[itemId];
@@ -6402,7 +6477,7 @@ for (let i=0; i<totalSlots; i++) {
         const totalSpan = document.getElementById('shopConfirmTotal');
         let qty = parseInt(input.value) || 1;
         if (qty < 1) qty = 1;
-        if (pendingConfirmAction && pendingConfirmAction.type !== 'multi_sell') {
+if (pendingConfirmAction && pendingConfirmAction.type !== 'batch_sell_by_rarity') {
             const template = ITEM_TEMPLATES[pendingConfirmAction.itemId];
             if (template) {
                 const price = pendingConfirmAction.type === 'buy' ? template.buyPrice : template.sellPrice;
@@ -6431,163 +6506,176 @@ for (let i=0; i<totalSlots; i++) {
         totalSpan.textContent = '總價：🪙 0';
     }
 
+// 更新按稀有度選中嘅物品列表（用於顯示剔號）
+function updateRaritySelectedItems() {
+    const filter = shopSellFilter;
+    const category = shopCategory;
+    const items = [];
+    
+    // ✅ 如果 filter 係空字串，清除所有剔號
+    if (!filter) {
+        shopRaritySelectedItems = [];
+        return;
+    }
+    
+    if (category === 'equipment') {
+        const instances = getBackpackEquipInstances();
+        instances.forEach(inst => {
+            if (inst.rarity === filter) {
+                items.push(inst.uid);
+            }
+        });
+    } else {
+        Object.keys(ITEM_TEMPLATES).forEach(itemId => {
+            const template = ITEM_TEMPLATES[itemId];
+            if (!template || template.category !== category) return;
+            if (!template.sellPrice || template.sellPrice <= 0) return;
+            const counts = gameState.player.items[itemId] || { common:0, rare:0, epic:0, legendary:0 };
+            const count = counts[filter] || 0;
+            if (count > 0) {
+                items.push(itemId + '|' + filter);
+            }
+        });
+    }
+    
+    shopRaritySelectedItems = items;
+}
+
+function confirmSellByRarity() {
+    const filter = shopSellFilter || 'all';
+    const category = shopCategory;
+    const items = [];
+    let totalPrice = 0;
+    
+    if (category === 'equipment') {
+        const instances = getBackpackEquipInstances();
+        instances.forEach(inst => {
+            if (filter !== 'all' && inst.rarity !== filter) return;
+            const template = ITEM_TEMPLATES[inst.itemId];
+            if (!template || !template.sellPrice || template.sellPrice <= 0) return;
+            items.push({ type: 'instance', uid: inst.uid, price: template.sellPrice, name: template.name, rarity: inst.rarity });
+            totalPrice += template.sellPrice;
+        });
+    } else {
+        Object.keys(ITEM_TEMPLATES).forEach(itemId => {
+            const template = ITEM_TEMPLATES[itemId];
+            if (!template || template.category !== category) return;
+            if (!template.sellPrice || template.sellPrice <= 0) return;
+            const counts = gameState.player.items[itemId] || { common:0, rare:0, epic:0, legendary:0 };
+            const rarityOrder = ['common','rare','epic','legendary'];
+            rarityOrder.forEach(rarity => {
+                if (filter !== 'all' && rarity !== filter) return;
+                const count = counts[rarity] || 0;
+                if (count > 0) {
+                    items.push({ type: 'stack', itemId: itemId, rarity: rarity, count: count, price: template.sellPrice, name: template.name });
+                    totalPrice += template.sellPrice * count;
+                }
+            });
+        });
+    }
+    
+    if (items.length === 0) {
+        addLog('❌ 沒有符合條件嘅物品可賣出');
+        return;
+    }
+    
+    // ✅ 唔需要再設定 shopRaritySelectedItems，因為 updateRaritySelectedItems 已經做咗
+    
+    const rarityName = filter === 'all' ? '全部' : RARITY_NAMES[filter] || filter;
+    const categoryName = category === 'equipment' ? '裝備' : (category === 'material' ? '素材' : '其他');
+    document.getElementById('shopConfirmTitle').textContent = '⚠️ 確認批量賣出';
+    document.getElementById('shopConfirmMsg').textContent = `確定要賣出所有 ${rarityName} 品質嘅 ${categoryName} 嗎？`;
+    document.getElementById('shopConfirmDetail').textContent = `共 ${items.length} 件物品，總收入：🪙 ${formatNum(totalPrice)}`;
+    document.getElementById('shopConfirmQuantityRow').style.display = 'none';
+    document.getElementById('shopConfirmTotal').textContent = '';
+    
+    pendingConfirmAction = { type: 'batch_sell_by_rarity', items: items, totalPrice: totalPrice };
+    document.getElementById('shopConfirmOverlay').classList.add('show');
+}
+
     function executeConfirmAction() {
-        if (!pendingConfirmAction) return;
-        if (pendingConfirmAction.type === 'multi_sell') {
-            executeMultiSell();
-            return;
-        }
-        const { type, itemId, rarity, itemType, uid } = pendingConfirmAction;
-        const template = ITEM_TEMPLATES[itemId];
-        if (!template) return;
-        const qty = confirmQuantity;
-        const price = type === 'buy' ? template.buyPrice : template.sellPrice;
-        const totalCost = qty * price;
-        if (type === 'buy') {
-            if (gameState.player.gold < totalCost) { addLog('金幣不足'); return; }
-            gameState.player.gold -= totalCost;
-            if (template.category === 'equipment') {
-                for (let i=0; i<qty; i++) {
-                    addEquipmentInstance(itemId, rarity, 0);
+    if (!pendingConfirmAction) return;
+
+    // 1️⃣ 處理按稀有度批量賣出
+    if (pendingConfirmAction.type === 'batch_sell_by_rarity') {
+        const { items, totalPrice } = pendingConfirmAction;
+        let soldCount = 0;
+        items.forEach(item => {
+            if (item.type === 'instance') {
+                const inst = findEquipInstance(item.uid);
+                if (inst && !inst.equipped) {
+                    if (removeEquipmentInstance(item.uid)) soldCount++;
                 }
-                addLog(`🛍️ 購買了 ${qty} 個 ${RARITY_NAMES[rarity]} ${template.name}，花費 ${formatNum(totalCost)} 金幣`);
-            } else {
-                addItem(itemId, rarity, qty);
-                addLog(`🛍️ 購買了 ${qty} 個 ${RARITY_NAMES[rarity]} ${template.name}，花費 ${formatNum(totalCost)} 金幣`);
+            } else if (item.type === 'stack') {
+                if (removeItem(item.itemId, item.rarity, item.count)) soldCount++;
             }
-        } else {
-            if (itemType === 'instance') {
-                const inst = findEquipInstance(uid);
-                if (!inst || inst.equipped) { addLog('裝備不存在或已裝備'); return; }
-                if (removeEquipmentInstance(uid)) {
-                    gameState.player.gold += totalCost;
-                    addLog(`💰 賣出 1 個 ${RARITY_NAMES[rarity]} ${template.name}，獲得 ${formatNum(totalCost)} 金幣`);
-                } else {
-                    addLog('賣出失敗');
-                    return;
-                }
-            } else if (itemType === 'stack') {
-                const count = getItemCount(itemId, rarity);
-                if (count < qty) { addLog('持有數量不足'); return; }
-                if (removeItem(itemId, rarity, qty)) {
-                    gameState.player.gold += totalCost;
-                    addLog(`💰 賣出 ${qty} 個 ${RARITY_NAMES[rarity]} ${template.name}，獲得 ${formatNum(totalCost)} 金幣`);
-                } else {
-                    addLog('賣出失敗');
-                    return;
-                }
-            }
+        });
+        if (soldCount > 0) {
+            gameState.player.gold += totalPrice;
+            addLog(`💰 批量賣出 ${soldCount} 件物品，獲得 ${formatNum(totalPrice)} 金幣`);
         }
-        shopSelectedItem = null;
-        shopQuantity = 1;
+        // ✅ 清除選中狀態
+        shopRaritySelectedItems = [];
         pendingConfirmAction = null;
         document.getElementById('shopConfirmOverlay').classList.remove('show');
         render();
         renderShop();
+        return;
     }
 
-    function bindShopEvents() {
-        document.getElementById('shopBuyModeBtn').addEventListener('click', () => { 
-            shopMode='buy'; 
-            multiSelectMode = false;
-            selectedSellItems = [];
-            shopSelectedItem=null; 
-            shopQuantity=1; 
-            renderShop(); 
-        });
-        document.getElementById('shopSellModeBtn').addEventListener('click', () => { 
-            shopMode='sell'; 
-            multiSelectMode = false;
-            selectedSellItems = [];
-            shopSelectedItem=null; 
-            shopQuantity=1; 
-            renderShop(); 
-        });
-        document.getElementById('shopMultiSelectBtn').addEventListener('click', function() {
-            if (shopMode !== 'sell') return;
-            multiSelectMode = !multiSelectMode;
-            if (!multiSelectMode) {
-                selectedSellItems = [];
+    // 2️⃣ 普通買賣（單件）
+    const { type, itemId, rarity, itemType, uid } = pendingConfirmAction;
+    const template = ITEM_TEMPLATES[itemId];
+    if (!template) return;
+    
+    const qtyInput = document.getElementById('confirmQtyInput');
+    const qty = parseInt(qtyInput.value) || 1;
+    const price = type === 'buy' ? template.buyPrice : template.sellPrice;
+    const totalCost = qty * price;
+
+    if (type === 'buy') {
+        if (gameState.player.gold < totalCost) { addLog('金幣不足'); return; }
+        gameState.player.gold -= totalCost;
+        if (template.category === 'equipment') {
+            for (let i=0; i<qty; i++) {
+                addEquipmentInstance(itemId, rarity, 0);
             }
-            renderShop();
-        });
-        document.getElementById('shopMultiConfirmBtn').addEventListener('click', confirmMultiSell);
-        
-        document.querySelectorAll('#shopCategories .shop-category-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                document.querySelectorAll('#shopCategories .shop-category-btn').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                shopCategory = this.dataset.category;
-                shopSelectedItem = null;
-                shopQuantity = 1;
-                multiSelectMode = false;
-                selectedSellItems = [];
-                renderShop();
-            });
-        });
-        document.getElementById('shopQtyMinus').addEventListener('click', function() {
-            const input = document.getElementById('shopQtyInput');
-            let val = parseInt(input.value) || 1;
-            if (val > 1) { val--; input.value=val; updateShopQty(); }
-        });
-        document.getElementById('shopQtyPlus').addEventListener('click', function() {
-            const input = document.getElementById('shopQtyInput');
-            let val = parseInt(input.value) || 1;
-            if (shopSelectedItem) {
-                const template = ITEM_TEMPLATES[shopSelectedItem.id];
-                if (template) {
-                    const price = shopMode === 'buy' ? template.buyPrice : template.sellPrice;
-                    let maxQty = 0;
-                    if (shopMode === 'buy') {
-                        maxQty = Math.floor(gameState.player.gold / price);
-                    } else {
-                        if (shopSelectedItem.type === 'instance') {
-                            const inst = findEquipInstance(shopSelectedItem.uid);
-                            if (inst && !inst.equipped) maxQty = 1;
-                        } else if (shopSelectedItem.type === 'stack') {
-                            maxQty = getItemCount(shopSelectedItem.id, shopSelectedItem.rarity);
-                        }
-                    }
-                    if (val < maxQty) { val++; input.value=val; updateShopQty(); }
-                }
-            } else { val++; input.value=val; updateShopQty(); }
-        });
-        document.getElementById('shopQtyInput').addEventListener('change', function() { updateShopQty(); });
-
-        const overlay = document.getElementById('shopConfirmOverlay');
-        document.getElementById('shopConfirmCancel').addEventListener('click', function() { overlay.classList.remove('show'); pendingConfirmAction=null; });
-        document.getElementById('shopConfirmOk').addEventListener('click', function() { executeConfirmAction(); });
-        overlay.addEventListener('click', function(e) { if (e.target===this) { overlay.classList.remove('show'); pendingConfirmAction=null; } });
-
-        document.getElementById('confirmQtyMinus').addEventListener('click', function() {
-            const input = document.getElementById('confirmQtyInput');
-            let val = parseInt(input.value) || 1;
-            if (val > 1) { val--; input.value=val; updateConfirmQuantityDisplay(); }
-        });
-        document.getElementById('confirmQtyPlus').addEventListener('click', function() {
-            const input = document.getElementById('confirmQtyInput');
-            let val = parseInt(input.value) || 1;
-            if (pendingConfirmAction && pendingConfirmAction.type !== 'multi_sell') {
-                const template = ITEM_TEMPLATES[pendingConfirmAction.itemId];
-                if (template) {
-                    const price = pendingConfirmAction.type === 'buy' ? template.buyPrice : template.sellPrice;
-                    let maxQty = 0;
-                    if (pendingConfirmAction.type === 'buy') {
-                        maxQty = Math.floor(gameState.player.gold / price);
-                    } else {
-                        if (pendingConfirmAction.itemType === 'instance') {
-                            const inst = findEquipInstance(pendingConfirmAction.uid);
-                            if (inst && !inst.equipped) maxQty = 1;
-                        } else if (pendingConfirmAction.itemType === 'stack') {
-                            maxQty = getItemCount(pendingConfirmAction.itemId, pendingConfirmAction.rarity);
-                        }
-                    }
-                    if (val < maxQty) { val++; input.value=val; updateConfirmQuantityDisplay(); }
-                }
-            } else { val++; input.value=val; updateConfirmQuantityDisplay(); }
-        });
-        document.getElementById('confirmQtyInput').addEventListener('change', function() { updateConfirmQuantityDisplay(); });
+            addLog(`🛍️ 購買了 ${qty} 個 ${RARITY_NAMES[rarity]} ${template.name}，花費 ${formatNum(totalCost)} 金幣`);
+        } else {
+            addItem(itemId, rarity, qty);
+            addLog(`🛍️ 購買了 ${qty} 個 ${RARITY_NAMES[rarity]} ${template.name}，花費 ${formatNum(totalCost)} 金幣`);
+        }
+    } else {
+        if (itemType === 'instance') {
+            const inst = findEquipInstance(uid);
+            if (!inst || inst.equipped) { addLog('裝備不存在或已裝備'); return; }
+            if (removeEquipmentInstance(uid)) {
+                gameState.player.gold += totalCost;
+                addLog(`💰 賣出 1 個 ${RARITY_NAMES[rarity]} ${template.name}，獲得 ${formatNum(totalCost)} 金幣`);
+            } else {
+                addLog('賣出失敗');
+                return;
+            }
+        } else if (itemType === 'stack') {
+            const count = getItemCount(itemId, rarity);
+            if (count < qty) { addLog('持有數量不足'); return; }
+            if (removeItem(itemId, rarity, qty)) {
+                gameState.player.gold += totalCost;
+                addLog(`💰 賣出 ${qty} 個 ${RARITY_NAMES[rarity]} ${template.name}，獲得 ${formatNum(totalCost)} 金幣`);
+            } else {
+                addLog('賣出失敗');
+                return;
+            }
+        }
     }
+
+    shopSelectedItem = null;
+    shopQuantity = 1;
+    pendingConfirmAction = null;
+    document.getElementById('shopConfirmOverlay').classList.remove('show');
+    render();
+    renderShop();
+}
 
     function updateShopQty() {
         const input = document.getElementById('shopQtyInput');
